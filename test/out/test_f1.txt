@@ -1,0 +1,3 @@
+i am a text file
+i contain text
+in a file
