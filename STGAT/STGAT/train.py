@@ -33,7 +33,7 @@ parser.add_argument("--skip", default=1, type=int)
 
 parser.add_argument("--seed", type=int, default=72, help="Random seed.")
 parser.add_argument("--batch_size", default=64, type=int)
-parser.add_argument("--num_epochs", default=400, type=int)
+parser.add_argument("--num_epochs", default=255, type=int)
 
 parser.add_argument("--noise_dim", default=(16,), type=int_tuple)
 parser.add_argument("--noise_type", default="gaussian")
