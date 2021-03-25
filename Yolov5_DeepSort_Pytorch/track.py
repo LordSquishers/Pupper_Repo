@@ -1,7 +1,9 @@
+import sys
+sys.path.insert(0, './yolov5')
+
 from yolov5.utils.datasets import LoadImages, LoadStreams
-from yolov5.utils.general import (
-    check_img_size, non_max_suppression, apply_classifier, scale_coords, xyxy2xywh, plot_one_box, strip_optimizer)
-from yolov5.utils.torch_utils import select_device, load_classifier, time_synchronized
+from yolov5.utils.general import check_img_size, non_max_suppression, scale_coords
+from yolov5.utils.torch_utils import select_device, time_synchronized
 from deep_sort_pytorch.utils.parser import get_config
 from deep_sort_pytorch.deep_sort import DeepSort
 import argparse
@@ -13,16 +15,13 @@ from pathlib import Path
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
-# https://github.com/pytorch/pytorch/issues/3678
-import sys
-sys.path.insert(0, './yolov5')
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
 
 
 palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
 
 
-def bbox_rel(image_width, image_height,  *xyxy):
+def bbox_rel(*xyxy):
     """" Calculates the relative bounding box from absolute pixel values. """
     bbox_left = min([xyxy[0].item(), xyxy[2].item()])
     bbox_top = min([xyxy[1].item(), xyxy[3].item()])
@@ -43,7 +42,7 @@ def compute_color_for_labels(label):
     return tuple(color)
 
 
-def draw_boxes(img, bbox, identities=None, offset=(0,0)):
+def draw_boxes(img, bbox, identities=None, offset=(0, 0)):
     for i, box in enumerate(bbox):
         x1, y1, x2, y2 = [int(i) for i in box]
         x1 += offset[0]
@@ -56,15 +55,18 @@ def draw_boxes(img, bbox, identities=None, offset=(0,0)):
         label = '{}{:d}'.format("", id)
         t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 2, 2)[0]
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
-        cv2.rectangle(img, (x1, y1), (x1 + t_size[0] + 3, y1 + t_size[1] + 4), color, -1)
-        cv2.putText(img, label, (x1, y1 + t_size[1] + 4), cv2.FONT_HERSHEY_PLAIN, 2, [255, 255, 255], 2)
+        cv2.rectangle(
+            img, (x1, y1), (x1 + t_size[0] + 3, y1 + t_size[1] + 4), color, -1)
+        cv2.putText(img, label, (x1, y1 +
+                                 t_size[1] + 4), cv2.FONT_HERSHEY_PLAIN, 2, [255, 255, 255], 2)
     return img
 
 
 def detect(opt, save_img=False):
     out, source, weights, view_img, save_txt, imgsz = \
         opt.output, opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
-    webcam = source == '0' or source.startswith('rtsp') or source.startswith('http') or source.endswith('.txt')
+    webcam = source == '0' or source.startswith(
+        'rtsp') or source.startswith('http') or source.endswith('.txt')
 
     # initialize deepsort
     cfg = get_config()
@@ -83,7 +85,8 @@ def detect(opt, save_img=False):
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
-    model = torch.load(weights, map_location=device)['model'].float()  # load to FP32
+    model = torch.load(weights, map_location=device)[
+        'model'].float()  # load to FP32
     model.to(device).eval()
     if half:
         model.half()  # to FP16
@@ -105,7 +108,8 @@ def detect(opt, save_img=False):
     # Run inference
     t0 = time.time()
     img = torch.zeros((1, 3, imgsz, imgsz), device=device)  # init img
-    _ = model(img.half() if half else img) if device.type != 'cpu' else None  # run once
+    # run once
+    _ = model(img.half() if half else img) if device.type != 'cpu' else None
 
     save_path = str(Path(out))
     txt_path = str(Path(out)) + '/results.txt'
@@ -122,7 +126,8 @@ def detect(opt, save_img=False):
         pred = model(img, augment=opt.augment)[0]
 
         # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        pred = non_max_suppression(
+            pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
         t2 = time_synchronized()
 
         # Process detections
@@ -137,7 +142,8 @@ def detect(opt, save_img=False):
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+                det[:, :4] = scale_coords(
+                    img.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
                 for c in det[:, -1].unique():
@@ -149,22 +155,15 @@ def detect(opt, save_img=False):
 
                 # Adapt detections to deep sort input format
                 for *xyxy, conf, cls in det:
-                    # conf is confidence
-                    img_h, img_w, _ = im0.shape
-                    x_c, y_c, bbox_w, bbox_h = bbox_rel(img_w, img_h, *xyxy)
+                    x_c, y_c, bbox_w, bbox_h = bbox_rel(*xyxy)
                     obj = [x_c, y_c, bbox_w, bbox_h]
                     bbox_xywh.append(obj)
-                    # some of the predictions did not have a high enough confidence.
-                    # as a result, we were missing some people each frame
-                    # there have been no false positives (so far)
-                    # so hopefully we should find everyone now.
-                    confs.append([1])
+                    confs.append([conf.item()])
 
                 xywhs = torch.Tensor(bbox_xywh)
                 confss = torch.Tensor(confs)
 
                 # Pass detections to deepsort
-                # this creates IDs and such, but does not detect each person. how can we still get IDs?
                 outputs = deepsort.update(xywhs, confss, im0)
 
                 # draw boxes for visualization
@@ -181,16 +180,22 @@ def detect(opt, save_img=False):
                         bbox_w = output[2]
                         bbox_h = output[3]
                         identity = output[-1]
-                        print(output)
-
-                        # TODO - THIS WRITES THE OUTPUT TO FILE
-                        # PERHAPS CHANGE THIS SO IT SENDS TO A WEBSOCKET??
+                        # TODO OUTPUT HERE
+                        # UPDATE TRAJECTORIES
+                        # predictor.update(frame, id, xxyy)
+                        # in predictor.update
                         with open(txt_path, 'a') as f:
                             f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_left,
-                                    bbox_top, bbox_w, bbox_h))  # label format
+                                                           bbox_top, bbox_w, bbox_h, -1, -1, -1, -1))  # label format
+
+            else:
+                deepsort.increment_ages()
 
             # Print time (inference + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))
+
+            # TODO predict from last n frames and output
+            # you'll need to incorporate STGAT into here...
 
             # Stream results
             if view_img:
@@ -213,7 +218,8 @@ def detect(opt, save_img=False):
                         fps = vid_cap.get(cv2.CAP_PROP_FPS)
                         w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                         h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*opt.fourcc), fps, (w, h))
+                        vid_writer = cv2.VideoWriter(
+                            save_path, cv2.VideoWriter_fourcc(*opt.fourcc), fps, (w, h))
                     vid_writer.write(im0)
 
     if save_txt or save_img:
@@ -226,21 +232,36 @@ def detect(opt, save_img=False):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolov5/weights/yolov5x.pt', help='model.pt path')
-    parser.add_argument('--source', type=str, default='inference/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--output', type=str, default='inference/output', help='output folder')  # output folder
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.4, help='object confidence threshold')
-    parser.add_argument('--iou-thres', type=float, default=0.5, help='IOU threshold for NMS')
-    parser.add_argument('--fourcc', type=str, default='mp4v', help='output video codec (verify ffmpeg support)')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
-    parser.add_argument('--view-img', action='store_true', help='display results')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--weights', type=str,
+                        default='yolov5/weights/yolov5s.pt', help='model.pt path')
+    # file/folder, 0 for webcam
+    parser.add_argument('--source', type=str,
+                        default='inference/images', help='source')
+    parser.add_argument('--output', type=str, default='inference/output',
+                        help='output folder')  # output folder
+    parser.add_argument('--img-size', type=int, default=640,
+                        help='inference size (pixels)')
+    parser.add_argument('--conf-thres', type=float,
+                        default=0.4, help='object confidence threshold')
+    parser.add_argument('--iou-thres', type=float,
+                        default=0.5, help='IOU threshold for NMS')
+    parser.add_argument('--fourcc', type=str, default='mp4v',
+                        help='output video codec (verify ffmpeg support)')
+    parser.add_argument('--device', default='',
+                        help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--view-img', action='store_true',
+                        help='display results')
+    parser.add_argument('--save-txt', action='store_true',
+                        help='save results to *.txt')
     # class 0 is person
-    parser.add_argument('--classes', nargs='+', type=int, default=[0], help='filter by class')
-    parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
-    parser.add_argument('--augment', action='store_true', help='augmented inference')
-    parser.add_argument("--config_deepsort", type=str, default="deep_sort/configs/deep_sort.yaml")
+    parser.add_argument('--classes', nargs='+', type=int,
+                        default=[0], help='filter by class')
+    parser.add_argument('--agnostic-nms', action='store_true',
+                        help='class-agnostic NMS')
+    parser.add_argument('--augment', action='store_true',
+                        help='augmented inference')
+    parser.add_argument("--config_deepsort", type=str,
+                        default="deep_sort_pytorch/configs/deep_sort.yaml")
     args = parser.parse_args()
     args.img_size = check_img_size(args.img_size)
     print(args)
