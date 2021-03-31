@@ -6,6 +6,15 @@ from yolov5.utils.general import check_img_size, non_max_suppression, scale_coor
 from yolov5.utils.torch_utils import select_device, time_synchronized
 from deep_sort_pytorch.utils.parser import get_config
 from deep_sort_pytorch.deep_sort import DeepSort
+
+from data.loader import data_loader
+from models_stgat import TrajectoryGenerator
+from utils_stgat import (
+    int_tuple,
+    relative_to_abs,
+    get_dset_path,
+)
+
 import argparse
 import os
 import platform
@@ -15,10 +24,71 @@ from pathlib import Path
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
-
-
+import numpy as np
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 palette = (2 ** 11 - 1, 2 ** 15 - 1, 2 ** 20 - 1)
+rolling_data = []
+
+
+def get_generator(checkpoint):
+    n_units = (
+        [32]
+        + [int(x) for x in '16'.strip().split(",")]
+        + [32]
+    )
+    n_heads = [int(x) for x in '4,1'.strip().split(",")]
+    model = TrajectoryGenerator(
+        obs_len=8,
+        pred_len=8,
+        traj_lstm_input_size=2,
+        traj_lstm_hidden_size=32,
+        n_units=n_units,
+        n_heads=n_heads,
+        graph_network_out_dims=32,
+        dropout=0,
+        alpha=0.2,
+        graph_lstm_hidden_size=32,
+        noise_dim=(16,),
+        noise_type='gaussian',
+    )
+    model.load_state_dict(checkpoint["state_dict"])
+    model.cuda()
+    model.eval()
+    return model
+
+
+
+def evaluate(loader, generator):
+    total_traj = 0
+    predictions = []
+    with torch.no_grad():
+        for batch in loader:
+            batch = [tensor.cuda() for tensor in batch]
+            (
+                obs_traj,
+                pred_traj_gt,
+                obs_traj_rel,
+                pred_traj_gt_rel,
+                non_linear_ped,
+                loss_mask,
+                seq_start_end,
+            ) = batch
+
+            total_traj += pred_traj_gt.size(1)
+
+            for _ in range(20):
+                pred_traj_fake_rel = generator(
+                    obs_traj_rel, obs_traj, seq_start_end, 0, 3
+                )
+                pred_traj_fake_rel = pred_traj_fake_rel[-8 :]
+
+                pred_traj_fake = relative_to_abs(pred_traj_fake_rel, obs_traj[-1])
+                predictions.append(pred_traj_fake)
+
+    return predictions
+
 
 
 def bbox_rel(*xyxy):
@@ -63,6 +133,7 @@ def draw_boxes(img, bbox, identities=None, offset=(0, 0)):
 
 
 def detect(opt, save_img=False):
+    global rolling_data
     out, source, weights, view_img, save_txt, imgsz = \
         opt.output, opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size
     webcam = source == '0' or source.startswith(
@@ -172,6 +243,10 @@ def detect(opt, save_img=False):
                     identities = outputs[:, -1]
                     draw_boxes(im0, bbox_xyxy, identities)
 
+                if len(rolling_data) > 50:
+                    rolling_data = rolling_data[:50]
+
+                print(len(rolling_data))
                 # Write MOT compliant results to file
                 if save_txt and len(outputs) != 0:
                     for j, output in enumerate(outputs):
@@ -180,10 +255,10 @@ def detect(opt, save_img=False):
                         bbox_w = output[2]
                         bbox_h = output[3]
                         identity = output[-1]
-                        # TODO OUTPUT HERE
-                        # UPDATE TRAJECTORIES
-                        # predictor.update(frame, id, xxyy)
-                        # in predictor.update
+
+                        rolling_data.insert(0, [frame_idx, identity, bbox_left, bbox_top, bbox_w, bbox_h])
+
+                        print('inserted! now', len(rolling_data))
                         with open(txt_path, 'a') as f:
                             f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_left,
                                                            bbox_top, bbox_w, bbox_h, -1, -1, -1, -1))  # label format
@@ -193,9 +268,29 @@ def detect(opt, save_img=False):
 
             # Print time (inference + NMS)
             print('%sDone. (%.3fs)' % (s, t2 - t1))
+            # create a new dataset and predict every t2-t1 seconds
+            # load dataset
+            # eval w/ prediction
+            # ???
+            # profit
 
-            # TODO predict from last n frames and output
-            # you'll need to incorporate STGAT into here...
+            data_string = ''
+            for entry in rolling_data:
+                new_line = ''
+                for d in entry:
+                    new_line += str(d) + ' '
+                data_string += new_line + '\n'
+            # print(data_string)
+
+            _, loader = data_loader(None, data_string)  # this must be done dynamically (every x frames)
+            # 'DATA' needs to be a string in file format, ex. 1 2 10 10 20 20\n
+            #                                                 2 2 11 10 20 20\n and so on.
+            #  also needs to be called every frame (may need to optimize)
+            tt1 = time.time()
+            prediction = evaluate(loader, generator)
+            print(prediction)
+            np.savetxt('predictions.txt', prediction)
+            print('time taken', time.time() - tt1, 'seconds')
 
             # Stream results
             if view_img:
@@ -267,4 +362,7 @@ if __name__ == '__main__':
     print(args)
 
     with torch.no_grad():
+        checkpoint = torch.load('./model_best.pth.tar', map_location=torch.device('cpu'))
+        generator = get_generator(checkpoint)
+
         detect(args)
