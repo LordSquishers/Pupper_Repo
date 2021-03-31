@@ -25,6 +25,10 @@ import cv2
 import torch
 import torch.backends.cudnn as cudnn
 import numpy as np
+
+import matplotlib
+import matplotlib.pyplot as plt
+
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -246,7 +250,7 @@ def detect(opt, save_img=False):
                 if len(rolling_data) > 50:
                     rolling_data = rolling_data[:50]
 
-                print(len(rolling_data))
+                # print(len(rolling_data))
                 # Write MOT compliant results to file
                 if save_txt and len(outputs) != 0:
                     for j, output in enumerate(outputs):
@@ -256,9 +260,9 @@ def detect(opt, save_img=False):
                         bbox_h = output[3]
                         identity = output[-1]
 
-                        rolling_data.insert(0, [frame_idx, identity, bbox_left, bbox_top, bbox_w, bbox_h])
+                        rolling_data.insert(0, [frame_idx, identity, bbox_left + (0.5 * bbox_w), bbox_top + (0.5 * bbox_h)])
 
-                        print('inserted! now', len(rolling_data))
+                        # print('inserted! now', len(rolling_data))
                         with open(txt_path, 'a') as f:
                             f.write(('%g ' * 10 + '\n') % (frame_idx, identity, bbox_left,
                                                            bbox_top, bbox_w, bbox_h, -1, -1, -1, -1))  # label format
@@ -274,23 +278,27 @@ def detect(opt, save_img=False):
             # ???
             # profit
 
-            data_string = ''
-            for entry in rolling_data:
-                new_line = ''
-                for d in entry:
-                    new_line += str(d) + ' '
-                data_string += new_line + '\n'
-            # print(data_string)
+            # data_string = ''
+            # for entry in rolling_data:
+            #     new_line = ''
+            #     for d in entry:
+            #         new_line += str(d) + ' '
+            #     data_string += new_line + '\n'
+            # print('data', data_string)
 
-            _, loader = data_loader(None, data_string)  # this must be done dynamically (every x frames)
-            # 'DATA' needs to be a string in file format, ex. 1 2 10 10 20 20\n
-            #                                                 2 2 11 10 20 20\n and so on.
-            #  also needs to be called every frame (may need to optimize)
-            tt1 = time.time()
-            prediction = evaluate(loader, generator)
-            print(prediction)
-            np.savetxt('predictions.txt', prediction)
-            print('time taken', time.time() - tt1, 'seconds')
+            if len(rolling_data) >= 50:
+                # print(data_string)
+                _, loader = data_loader(None, rolling_data)  # this must be done dynamically (every x frames)
+                # 'DATA' needs to be a string in file format, ex. 1 2 10 10 20 20\n
+                #                                                 2 2 11 10 20 20\n and so on.
+                #  also needs to be called every frame (may need to optimize)
+                tt1 = time.time()
+                prediction = evaluate(loader, generator)
+                for run in prediction[0]:
+                    plt.scatter(run.cpu().numpy()[:][0], run.cpu().numpy()[:][1])
+                    plt.show()
+                print('time taken', time.time() - tt1, 'seconds')
+                sys.exit()
 
             # Stream results
             if view_img:

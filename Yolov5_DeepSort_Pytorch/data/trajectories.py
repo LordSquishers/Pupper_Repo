@@ -85,11 +85,11 @@ class TrajectoryDataset(Dataset):
     def __init__(
         self,
         pass_data,
-        obs_len=8,
-        pred_len=12,
+        obs_len=4,
+        pred_len=6,
         skip=1,
         threshold=0.002,
-        min_ped=1,
+        min_ped=0,
         delim="\t",
     ):
         """
@@ -121,7 +121,7 @@ class TrajectoryDataset(Dataset):
         loss_mask_list = []
         non_linear_ped = []
 
-        data = pass_data  # = read_file(path, delim)
+        data = np.array(pass_data)  # = read_file(path, delim)
         frames = np.unique(data[:, 0]).tolist()
         frame_data = []
         for frame in frames:
@@ -169,6 +169,7 @@ class TrajectoryDataset(Dataset):
                 seq_list_rel.append(curr_seq_rel[:num_peds_considered])
 
         self.num_seq = len(seq_list)
+        # print(seq_list)
         seq_list = np.concatenate(seq_list, axis=0)
         seq_list_rel = np.concatenate(seq_list_rel, axis=0)
         loss_mask_list = np.concatenate(loss_mask_list, axis=0)
